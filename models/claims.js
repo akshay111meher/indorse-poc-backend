@@ -13,7 +13,8 @@ var randtoken = require('rand-token');
 var crypto = require('crypto');
 var mailgun_params = config.get('mailgun_params');
 var mailgun = require('mailgun-js')(mailgun_params);
-
+const uuidv5 = require('uuid/v5');
+const unirest = require('unirest');
 // db.open(function(err, db) {
 //     if (!err) {
 //         console.log("Connected to database");
@@ -129,11 +130,15 @@ exports.claim = function(req, res) {
                         } else {
                             var claim = {};
                             claim['title'] = info['title'];
-                            claim['desc'] = info['desc']
-                            claim['proof'] = info['proof']
+                            claim['desc'] = info['desc'];
+                            claim['proof'] = info['proof'];
+                            claim['url'] = info['url'];
                             claim['state'] = 'new';
-                            claim['visible'] = true
+                            claim['visible'] = true;
+                            claim['verfied'] = false;
                             claim['ownerid'] = item['_id'].toString();
+                            //generating unique token id for given github url
+                            claim['token'] = uuidv5(info['url'],uuidv5.URL);
                             db.collection('claims', function(err, collection1) {
                                 collection1.insert(claim, {
                                     safe: true
@@ -146,12 +151,14 @@ exports.claim = function(req, res) {
                                     } else {
                                         if ('result' in result && 'ok' in result['result'] && result['result']['ok'] == 1) {
                                             create_votinground(result['ops'][0]['_id'].toString(),claim['ownerid']);
+                                            sendMail(item['email'],"indorseToken:"+claim['token'],"add a file with mentioned token id in the subject to your repository")
                                             res.send(200, {
                                                 success: true,
                                                 claim: result['ops'],
                                                 message: config.get('Msg34')
                                             });
                                         } else {
+                                            sendMail(item['email'],"indorseToken:"+claim['token'],config.get('Msg10')+" token generation failed");
                                             res.send(501, {
                                                 success: false,
                                                 message: config.get('Msg10')
@@ -168,6 +175,7 @@ exports.claim = function(req, res) {
 
 
                     } else {
+                        sendMail(item['email'],"indorseToken:"+claim['token'],config.get('Msg35')+" token generation failed");
                         res.send(404, {
                             success: false,
                             message: config.get('Msg35')
@@ -179,18 +187,113 @@ exports.claim = function(req, res) {
 
 
         } else {
+            sendMail(item['email'],"indorseToken:"+claim['token'],config.get('Msg36')+" token generation failed");
             res.send(422, {
                 success: false,
                 message: config.get('Msg36')
             });
         }
     } else {
+        sendMail(item['email'],"indorseToken:"+claim['token'],config.get('Msg28')+" token generation failed");
         res.send(401, {
             success: false,
             message: config.get('Msg28')
         });
     }
 }
+
+exports.checkClaim = function(req, res) {
+    
+        if ('login' in req.body && req.body.login) {
+            var info = req.body;
+            if ('email' in info && info['email'] != '' && 'url' in info && info['url'] != '' && 'claim_id' in info && info['claim_id'] != '') {
+    
+                db.collection('users', function(err, collection) {
+                    collection.findOne({
+                        'email': info['email']
+                    }, function(err, item) {
+    
+                        if (item) {
+                            //check here whether the file exists or not                        
+                            unirest.get(info['url']).end(function(response){
+                                if(response.status >=200 && response.status <=202){
+                                    if ('claim_id' in info && info['claim_id'] != '') {
+                                        db.collection('claims',function(err,collection1){
+                                            collection1.findOne({
+                                                '_id': new ObjectID(info['claim_id'])
+                                            },function(err,currclaim){
+                                                if(currclaim){
+                                                    var claim = {};
+                                                    currclaim['verfied'] = true;
+                                                    claim = currclaim;
+
+                                                    unirest.get(info['url']+'/'+claim['token']).end(function(response){
+                                                        collection1.update({
+                                                            '_id': new ObjectID(info['claim_id'])
+                                                        }, claim, {
+                                                            safe: true
+                                                        }, function(err, result) {
+                
+                                                            if (err) {
+                                                                res.send(501, {
+                                                                    success: false,
+                                                                    message: config.get('Msg37')
+                                                                });
+                                                            } else {
+                                                                res.send(200, {
+                                                                    success: true,
+                                                                    message: "token successfully checked and updated in database"
+                                                                });
+                                                            }
+                
+                                                        })
+                                                    })
+
+                                                }else{
+                                                    res.send(404, {
+                                                        success: false,
+                                                        message: config.get('Msg39')
+                                                    });        
+                                                }        
+                                            })
+                                        })
+                                    }else{
+                                        res.send(422, {
+                                            success: false,
+                                            message: config.get('Msg40')
+                                        });           
+                                    }
+                                }else{
+                                    res.send(422, {
+                                        success: false,
+                                        message: "Your claim token cant be found in your github repository"
+                                    });    
+                                }
+                            })
+                        } else {
+                            res.send(404, {
+                                success: false,
+                                message: config.get('Msg41')
+                            });
+                        }
+    
+                    })
+                })
+    
+    
+            } else {
+                res.send(422, {
+                    success: false,
+                    message: config.get('Msg42')
+                });
+            }
+        } else {
+            res.send(401, {
+                success: false,
+                message: config.get('Msg28')
+            });
+        }
+    }
 
 exports.updateClaims = function(req, res) {
 
@@ -463,4 +566,17 @@ exports.getclaims = function(req, res) {
             message: config.get('Msg28')
         });
     }
+}
+
+function sendMail(to, subject, text){
+    var data = {
+        from: 'Excited User <me@samples.mailgun.org>',
+        to: to,
+        subject: subject,
+        text: text
+      };
+       
+      mailgun.messages().send(data, function (error, body) {
+        console.log(body);
+      });
 }

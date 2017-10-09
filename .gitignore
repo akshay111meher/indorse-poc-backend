@@ -1,7 +1,6 @@
 out.log
 err.log
 nohup.out
-/node_modules
-config/
+node_modules
 .idea
 dist/
