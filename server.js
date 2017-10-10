@@ -46,7 +46,7 @@ app.post('/password/change',user.passwordChange)
 app.post('/claims',claim.claim)
 app.post('/getClaims',claim.getclaims)
 app.post('/updateClaim',claim.updateClaims)
-
+app.post('/checkClaim',claim.checkClaim)
 // Blockchain APIs
 //app.get('/test', score.scores)
 
